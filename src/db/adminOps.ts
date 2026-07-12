@@ -58,6 +58,30 @@ export async function moveCategory(id: number, dir: -1 | 1): Promise<void> {
   })
 }
 
+/**
+ * Remove re-import duplicates: within a group of transactions sharing the same
+ * dedupe key, if a validated (already-categorized) one exists, delete the
+ * NON-validated copies. Genuine repeats (all same validation status) are kept.
+ */
+export async function removeDuplicates(): Promise<{ removed: number }> {
+  const all = await db.transactions.toArray()
+  const byKey = new Map<string, typeof all>()
+  for (const t of all) {
+    const g = byKey.get(t.dedupeKey)
+    if (g) g.push(t)
+    else byKey.set(t.dedupeKey, [t])
+  }
+  const toDelete: number[] = []
+  for (const group of byKey.values()) {
+    if (group.length < 2) continue
+    if (group.some((t) => t.validated)) {
+      for (const t of group) if (!t.validated && t.id != null) toDelete.push(t.id)
+    }
+  }
+  if (toDelete.length) await db.transactions.bulkDelete(toDelete)
+  return { removed: toDelete.length }
+}
+
 /** Rename an account label across all its transactions. */
 export async function renameAccount(accountNum: string, newLabel: string): Promise<void> {
   const trimmed = newLabel.trim()

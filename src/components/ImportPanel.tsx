@@ -3,6 +3,7 @@ import { importCsv, type ImportStats } from '../lib/import'
 import { importExcelData, type ExcelImportStats } from '../lib/xlsxImport'
 import { clearAllData } from '../db/seed'
 import { exportBackup, restoreBackup } from '../db/backup'
+import { removeDuplicates } from '../db/adminOps'
 
 export function ImportPanel() {
   const [busy, setBusy] = useState(false)
@@ -61,6 +62,18 @@ export function ImportPanel() {
       await clearAllData()
       setCsvStats(null)
       setXlsxStats(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDedupe() {
+    setBusy(true)
+    try {
+      const { removed } = await removeDuplicates()
+      window.alert(
+        removed > 0 ? `${removed} doublon(s) supprimé(s).` : 'Aucun doublon trouvé.',
+      )
     } finally {
       setBusy(false)
     }
@@ -207,6 +220,20 @@ export function ImportPanel() {
             className="hidden"
             onChange={(e) => void handleRestore(e.target.files)}
           />
+        </div>
+
+        <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Des opérations en double après un import ? Nettoie-les (garde la version déjà
+            catégorisée, retire les copies non validées) :
+          </p>
+          <button
+            onClick={() => void handleDedupe()}
+            disabled={busy}
+            className="mt-2 rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Supprimer les doublons
+          </button>
         </div>
       </div>
 
