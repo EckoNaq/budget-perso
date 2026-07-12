@@ -1,6 +1,9 @@
 import { db } from './db'
 import type { Category, Rule, Univers } from './types'
 import { normalize } from '../lib/text'
+import { buildDedupeKey } from '../lib/csv'
+
+const DEDUPE_MIGRATION_FLAG = 'dedupeMigrated_v2'
 
 // Univers (top-level groups), mirroring the Excel year sheets.
 export const UNIVERS: Univers[] = [
@@ -120,8 +123,45 @@ export const AMBIGUOUS_SUPPLIERS = [
 let seedPromise: Promise<void> | null = null
 
 export function ensureSeed(): Promise<void> {
-  if (!seedPromise) seedPromise = doSeed().then(reconcileAmbiguousTransactions)
+  if (!seedPromise)
+    seedPromise = doSeed()
+      .then(reconcileAmbiguousTransactions)
+      .then(() => {
+        if (!safeGetFlag(DEDUPE_MIGRATION_FLAG)) return migrateDedupeKeys().then(() => safeSetFlag(DEDUPE_MIGRATION_FLAG))
+      })
   return seedPromise
+}
+
+function safeGetFlag(k: string): boolean {
+  try {
+    return !!localStorage.getItem(k)
+  } catch {
+    return false
+  }
+}
+function safeSetFlag(k: string) {
+  try {
+    localStorage.setItem(k, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Recompute dedupe keys of existing transactions to the current stable scheme
+ * (no balance, label-core). Skips synthetic keys (yearly income, manual entries)
+ * so their idempotency is preserved. Runs once, and after a backup restore.
+ */
+export async function migrateDedupeKeys(): Promise<void> {
+  const all = await db.transactions.toArray()
+  const updates = all.filter((t) => {
+    const k = t.dedupeKey || ''
+    if (k.startsWith('manual-income|') || /\|m\d{10,}$/.test(k)) return false
+    return buildDedupeKey(t) !== t.dedupeKey
+  })
+  if (updates.length) {
+    await db.transactions.bulkPut(updates.map((t) => ({ ...t, dedupeKey: buildDedupeKey(t) })))
+  }
 }
 
 /**

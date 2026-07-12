@@ -2,19 +2,33 @@ import Papa from 'papaparse'
 import type { Transaction } from '../db/types'
 import { normalize, parseAmount } from './text'
 
-/** Raw row shape from a Boursorama CSV export. */
+/** Raw row shape from a Boursorama CSV export (handles both export formats). */
 interface BoursoRow {
   dateOp: string
   dateVal: string
   label: string
+  /** Newer exports: clean merchant name (replaces supplierFound). */
+  suggestedLabel?: string
   category: string
   categoryParent: string
-  supplierFound: string
+  /** Older exports only. */
+  supplierFound?: string
   amount: string
   comment: string
   accountNum: string
   accountLabel: string
   accountbalance: string
+}
+
+/**
+ * The stable core of a bank label, used for dedup. Boursorama exports the label
+ * either as "Titre | LIBELLÉ BRUT" (old format) or just "LIBELLÉ BRUT" (new).
+ * Keeping the part after the last "|" makes both formats match.
+ */
+export function labelCore(label: string): string {
+  const raw = label ?? ''
+  const i = raw.lastIndexOf('|')
+  return i >= 0 ? raw.slice(i + 1) : raw
 }
 
 export interface ParsedTransaction
@@ -32,12 +46,14 @@ export function buildDedupeKey(t: {
   dateOp: string
   label: string
   amount: number
-  balance: number | null
+  balance?: number | null
 }): string {
-  // Normalize the account number so the same operation dedupes whether it
-  // comes from a CSV ("00040201170") or the Excel Data tab ("40201170").
+  // Key must be stable across export formats:
+  //  - account number normalized (leading zeros: "00040201170" == "40201170")
+  //  - label reduced to its stable core ("Titre | RAW" == "RAW")
+  //  - NO balance: the bank reports a different day-balance between exports.
   const acct = String(t.accountNum ?? '').replace(/^0+/, '')
-  return [acct, t.dateOp, normalize(t.label), t.amount.toFixed(2), t.balance ?? ''].join('|')
+  return [acct, t.dateOp, normalize(labelCore(t.label)), t.amount.toFixed(2)].join('|')
 }
 
 /**
@@ -84,7 +100,8 @@ export function parseBoursoramaCsv(text: string): ParseResult {
       year: y,
       month: m,
       label,
-      supplier: (r.supplierFound || '').trim(),
+      // Old exports carry supplierFound; new ones carry suggestedLabel instead.
+      supplier: (r.supplierFound || r.suggestedLabel || '').trim(),
       bankCategory: (r.category || '').trim(),
       bankCategoryParent: (r.categoryParent || '').trim(),
       amount,

@@ -1,6 +1,7 @@
 import { db } from './db'
 import type { Category, Rule, Transaction } from './types'
 import { HISTORY_FLAG } from '../lib/initHistory'
+import { migrateDedupeKeys } from './seed'
 
 interface BackupFile {
   app: 'budget-perso'
@@ -64,5 +65,8 @@ export async function restoreBackup(text: string): Promise<{ transactions: numbe
   } catch {
     /* ignore */
   }
+  // Restored backups may carry old-scheme keys → bring them up to date so
+  // future imports dedupe correctly.
+  await migrateDedupeKeys()
   return { transactions: data.transactions.length }
 }
