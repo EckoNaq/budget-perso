@@ -9,6 +9,17 @@ export interface CategoryMatch {
 }
 
 /**
+ * Matching key for merchants: normalized + accents stripped, so that
+ * "Intermarché" (new CSV `suggestedLabel`) matches the rule "intermarche"
+ * (old `supplierFound`). Kept separate from the dedupe normalization.
+ */
+function matchKey(s: string): string {
+  return normalize(s)
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+}
+
+/**
  * Find the best category for a transaction given the current rule set.
  *
  * Priority:
@@ -22,22 +33,22 @@ export function matchCategory(
   supplier: string,
   label: string,
 ): CategoryMatch | null {
-  const sup = normalize(supplier)
-  const lab = normalize(label)
+  const sup = matchKey(supplier)
+  const lab = matchKey(label)
 
   if (sup) {
-    const exact = rules.find((r) => r.matchType === 'supplier' && r.pattern === sup)
+    const exact = rules.find((r) => r.matchType === 'supplier' && matchKey(r.pattern) === sup)
     if (exact) return exact.ambiguous ? null : { category: exact.category, source: 'auto' }
 
     const prefix = rules
-      .filter((r) => r.matchType === 'supplier' && sup.startsWith(r.pattern + ' '))
+      .filter((r) => r.matchType === 'supplier' && sup.startsWith(matchKey(r.pattern) + ' '))
       .sort((a, b) => b.pattern.length - a.pattern.length)[0]
     if (prefix) return prefix.ambiguous ? null : { category: prefix.category, source: 'auto' }
   }
 
   if (lab) {
     const contains = rules
-      .filter((r) => r.matchType === 'labelContains' && lab.includes(r.pattern))
+      .filter((r) => r.matchType === 'labelContains' && lab.includes(matchKey(r.pattern)))
       .sort((a, b) => b.pattern.length - a.pattern.length)[0]
     if (contains) return { category: contains.category, source: 'auto' }
   }
@@ -55,7 +66,7 @@ export function loadRules(): Promise<Rule[]> {
  * category so future imports are pre-filled. Keyed on the supplier.
  */
 export async function learnSupplierRule(supplier: string, category: string): Promise<void> {
-  const pattern = normalize(supplier)
+  const pattern = matchKey(supplier)
   if (!pattern) return // nothing reliable to learn from
   const existing = await db.rules.where('pattern').equals(pattern).first()
   const now = Date.now()
@@ -106,7 +117,7 @@ export async function rebuildLearnedRules(): Promise<void> {
   const bySupplier = new Map<string, Map<string, number>>()
   for (const t of txs) {
     if (!t.category) continue
-    const sup = normalize(t.supplier)
+    const sup = matchKey(t.supplier)
     if (!sup) continue
     if (!bySupplier.has(sup)) bySupplier.set(sup, new Map())
     const counts = bySupplier.get(sup)!
@@ -120,10 +131,11 @@ export async function rebuildLearnedRules(): Promise<void> {
   for (const [sup, counts] of bySupplier) {
     const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1])
     const [topCat, topCount] = ranked[0]
-    const secondCount = ranked[1]?.[1] ?? 0
-    // Ambiguous if it's a seeded passthrough, or a second category recurs.
-    const ambiguous = ambiguousSeed.has(sup) || secondCount >= 2
     const total = ranked.reduce((s, [, n]) => s + n, 0)
+    // Ambiguous only if it's a seeded passthrough, or NO category clearly
+    // dominates (top < 70%). So "Intermarché" 146×Courses + 2×autre stays
+    // Courses, while a genuinely mixed merchant becomes ambiguous.
+    const ambiguous = ambiguousSeed.has(sup) || topCount / total < 0.7
     const rule = byPattern.get(sup)
     const patch: Partial<Rule> = {
       matchType: 'supplier',

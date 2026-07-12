@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db/db'
 import { ensureSeed } from './db/seed'
+import { rebuildLearnedRules } from './lib/categorize'
 import { initHistoryOnce } from './lib/initHistory'
 import { useTheme } from './lib/theme'
 import { Layout, type Tab } from './components/Layout'
@@ -28,6 +29,16 @@ export default function App() {
         if (r) setTimeout(() => setInitMsg(null), 6000)
       } catch {
         setInitMsg(null)
+      }
+      // One-time: recompute learned rules with the improved dominance heuristic
+      // (fixes merchants wrongly flagged ambiguous, e.g. Intermarché).
+      try {
+        if (!localStorage.getItem('rulesRecomputed_v3')) {
+          await rebuildLearnedRules()
+          localStorage.setItem('rulesRecomputed_v3', '1')
+        }
+      } catch {
+        /* ignore */
       }
       setReady(true)
     })()

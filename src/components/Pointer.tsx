@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import type { Category, Transaction } from '../db/types'
 import { UNIVERS } from '../db/seed'
-import { learnSupplierRule } from '../lib/categorize'
+import { learnSupplierRule, matchCategory } from '../lib/categorize'
 import { universColor } from '../lib/palette'
 import { formatEur } from '../lib/text'
 import type { Theme } from '../lib/theme'
@@ -14,6 +14,7 @@ export function Pointer({ theme }: { theme: Theme }) {
     [],
   )
   const categories = useLiveQuery(() => db.categories.orderBy('order').toArray(), [])
+  const rules = useLiveQuery(() => db.rules.toArray(), [])
   const [skipped, setSkipped] = useState<Set<number>>(new Set())
   const [sessionTotal, setSessionTotal] = useState<number | null>(null)
 
@@ -28,7 +29,7 @@ export function Pointer({ theme }: { theme: Theme }) {
     })
   }, [toValidate, skipped])
 
-  if (!toValidate || !categories) return <p className="text-slate-500">Chargement…</p>
+  if (!toValidate || !categories || !rules) return <p className="text-slate-500">Chargement…</p>
 
   const remaining = toValidate.length
   if (sessionTotal === null && remaining > 0) setSessionTotal(remaining)
@@ -46,6 +47,9 @@ export function Pointer({ theme }: { theme: Theme }) {
   }
 
   const current = queue[0]
+  // Live suggestion from the current rules (reflects accent-insensitive matching,
+  // even for transactions imported before a rule existed).
+  const suggested = matchCategory(rules, current.supplier, current.label)?.category ?? current.category
   const done = (sessionTotal ?? remaining) - remaining
   const pct = sessionTotal ? Math.round((done / sessionTotal) * 100) : 0
 
@@ -78,13 +82,14 @@ export function Pointer({ theme }: { theme: Theme }) {
         </div>
       </div>
 
-      <TxCard tx={current} categories={categories} theme={theme} onChoose={choose} onSkip={skip} onIgnore={ignore} />
+      <TxCard tx={current} suggested={suggested} categories={categories} theme={theme} onChoose={choose} onSkip={skip} onIgnore={ignore} />
     </div>
   )
 }
 
 function TxCard({
   tx,
+  suggested,
   categories,
   theme,
   onChoose,
@@ -92,13 +97,13 @@ function TxCard({
   onIgnore,
 }: {
   tx: Transaction
+  suggested: string | null
   categories: Category[]
   theme: Theme
   onChoose: (cat: string) => void
   onSkip: () => void
   onIgnore: () => void
 }) {
-  const suggested = tx.category // auto-suggestion (may be null)
   const byUnivers = UNIVERS.map((u) => ({
     u,
     cats: categories.filter((c) => c.univers === u.id),
