@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+
+# Données personnelles — ne jamais committer
+public/historique.xlsx
+*.xlsx
+*.csv
+*.local
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
